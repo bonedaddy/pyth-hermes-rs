@@ -3,7 +3,9 @@
 pub mod types;
 
 use {
+    futures_util::StreamExt,
     reqwest::{Client, Error},
+    reqwest_eventsource::{Error as EventSourceError, Event, EventSource},
     std::sync::Arc,
     types::*,
 };
@@ -102,13 +104,112 @@ impl HermesClient {
         resp.json::<LatestPublisherStakeCapsUpdateDataResponse>()
             .await
     }
+    pub async fn stream_price_updates<F>(&self, ids: &[&str], mut on_event: F) -> Result<(), Error>
+    where
+        F: FnMut(ParsedPriceUpdate) + Send + 'static,
+    {
+        let base_url = self.base_url.clone();
+        let client = self.http.clone();
+        let ids: Vec<String> = ids.iter().map(|s| s.to_string()).collect();
+
+        tokio::spawn(async move {
+            loop {
+                let url = format!("{}/v2/updates/price/stream", base_url);
+                let mut req = client.get(&url);
+                for id in &ids {
+                    req = req.query(&[("ids[]", id)]);
+                }
+
+                let mut es = match EventSource::new(req) {
+                    Ok(stream) => stream,
+                    Err(err) => {
+                        log::error!("failed to connect SSE {err:#?}");
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        continue;
+                    }
+                };
+
+                while let Some(event) = es.next().await {
+                    match event {
+                        Ok(Event::Message(msg)) => {
+                            if let Ok(update) = serde_json::from_str::<PriceUpdate>(&msg.data) {
+                                if let Some(parsed) = update.parsed {
+                                    for item in parsed {
+                                        if let Some(metadata) = item.metadata.clone() {
+                                            let parsed_update = ParsedPriceUpdate {
+                                                id: item.id,
+                                                price: item.price,
+                                                ema_price: item.ema_price,
+                                                metadata,
+                                            };
+                                            on_event(parsed_update);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Ok(Event::Open) => {
+                            // Connection established
+                        }
+                        Err(EventSourceError::StreamEnded) => {
+                            log::error!("stream ended, reconnecting");
+                            break;
+                        }
+                        Err(err) => {
+                            log::error!("sse error {err:#?}");
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use {
+        super::*,
+        tokio::time::{timeout, Duration},
+    };
     const BASE_URL: &str = "https://hermes.pyth.network";
     const FEED_ID: &str = "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace";
+
+    #[tokio::test]
+    async fn test_stream_price_updates_live() {
+        let client = HermesClient::new(BASE_URL);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+
+        client
+            .stream_price_updates(&[FEED_ID], move |update| {
+                let _ = tx.try_send(update);
+            })
+            .await
+            .expect("Failed to start SSE stream");
+
+        let mut events_received = 0;
+        loop {
+            let result = timeout(Duration::from_secs(20), rx.recv()).await;
+
+            match result {
+                Ok(Some(update)) => {
+                    assert_eq!(
+                        update.id.to_lowercase(),
+                        FEED_ID.trim_start_matches("0x").to_lowercase()
+                    );
+                    events_received += 1;
+                }
+                Ok(None) => panic!("Channel closed before receiving data"),
+                Err(_) => panic!("Timed out waiting for SSE data"),
+            }
+
+            if events_received >= 2 {
+                break;
+            }
+        }
+    }
 
     #[tokio::test]
     async fn test_latest_price_feeds() {
