@@ -1,6 +1,8 @@
 [package]
 name = "pyth-hermes-rs"
-version = "0.1.0"
+version = "0.0.1"
+description = "HTTP client for the Pyth Hermes API"
+keywords = ["solana", "pyth", "http"]
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -10,6 +12,9 @@ rust-version.workspace = true
 version = "0.12"
 features = ["json"]
 
+[dependencies.reqwest-eventsource]
+version = "0.6"
+
 [dependencies.serde]
 version = "1"
 features = ["derive"]
@@ -17,6 +22,12 @@ features = ["derive"]
 [dependencies.serde_json]
 version = "1"
 
-[dev-dependencies.tokio]
+[dependencies.tokio]
 version = "1"
-features = ["full"]
+features = ["full", "parking_lot"]
+
+[dependencies.log]
+version = "0.4"
+
+[dependencies.futures-util]
+version = "0.3"

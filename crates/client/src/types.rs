@@ -10,7 +10,7 @@ pub struct RpcPriceFeed {
     pub vaa: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct RpcPrice {
     pub price: String,
     pub conf: String,
@@ -18,7 +18,7 @@ pub struct RpcPrice {
     pub publish_time: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct RpcPriceFeedMetadata {
     pub emitter_chain: Option<i32>,
     pub prev_publish_time: Option<i64>,
@@ -74,4 +74,12 @@ pub struct ParsedPublisherStakeCapsUpdate {
 pub struct ParsedPublisherStakeCap {
     pub publisher: String,
     pub cap: i64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ParsedPriceUpdate {
+    pub id: String,
+    pub price: RpcPrice,
+    pub ema_price: RpcPrice,
+    pub metadata: RpcPriceFeedMetadata,
 }
