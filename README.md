@@ -8,3 +8,7 @@ Rust library providing a HTTP client for querying the [Pyth Hermes API](https://
 ## SSE Support
 
 `pyth-hermes-rs` supports SSE price updates, allowing you to receive updates in real time without having to poll the API
+
+## Usage
+
+For examples on how to use `pyth-hermes-rs`, see the tests in [lib.rs](./crates/client/src/lib.rs)
