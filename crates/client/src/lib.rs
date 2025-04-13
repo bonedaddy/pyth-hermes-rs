@@ -7,6 +7,7 @@ use {
     reqwest::{Client, Error},
     reqwest_eventsource::{Error as EventSourceError, Event, EventSource},
     std::sync::Arc,
+    tokio::task::JoinHandle,
     types::*,
 };
 
@@ -104,18 +105,23 @@ impl HermesClient {
         resp.json::<LatestPublisherStakeCapsUpdateDataResponse>()
             .await
     }
+    /// Spawns a task which streams price updates from the hermes api
+    ///
+    /// # Returns
+    ///
+    /// [`JoinHandle`] which can be used to abort the spawned task
     pub async fn stream_price_updates<F>(
         &self,
         ids: Vec<String>,
         mut on_event: F,
-    ) -> Result<(), Error>
+    ) -> Result<JoinHandle<()>, Error>
     where
         F: FnMut(ParsedPriceUpdate) + Send + 'static,
     {
         let base_url = self.base_url.clone();
         let client = self.http.clone();
 
-        tokio::spawn(async move {
+        let handler = tokio::spawn(async move {
             loop {
                 let url = format!("{}/v2/updates/price/stream", base_url);
                 let mut req = client.get(&url);
@@ -167,7 +173,7 @@ impl HermesClient {
             }
         });
 
-        Ok(())
+        Ok(handler)
     }
 }
 
@@ -185,17 +191,15 @@ mod test {
         let client = HermesClient::new(PUBLIC_BASE_URL);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-        let handler = tokio::task::spawn(async move {
-            client
-                .stream_price_updates(
-                    vec![ETH_USD_FEED_ID.to_string(), SOL_USD_FEED_ID.to_string()],
-                    move |update| {
-                        let _ = tx.send(update);
-                    },
-                )
-                .await
-                .expect("Failed to start SSE stream");
-        });
+        let handler = client
+            .stream_price_updates(
+                vec![ETH_USD_FEED_ID.to_string(), SOL_USD_FEED_ID.to_string()],
+                move |update| {
+                    let _ = tx.send(update);
+                },
+            )
+            .await
+            .expect("Failed to start SSE stream");
         let mut found_eth_feed = false;
         let mut found_sol_feed = false;
         let mut timer = tokio::time::interval(std::time::Duration::from_secs(20));
