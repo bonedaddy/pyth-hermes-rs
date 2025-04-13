@@ -104,13 +104,16 @@ impl HermesClient {
         resp.json::<LatestPublisherStakeCapsUpdateDataResponse>()
             .await
     }
-    pub async fn stream_price_updates<F>(&self, ids: &[&str], mut on_event: F) -> Result<(), Error>
+    pub async fn stream_price_updates<F>(
+        &self,
+        ids: Vec<String>,
+        mut on_event: F,
+    ) -> Result<(), Error>
     where
         F: FnMut(ParsedPriceUpdate) + Send + 'static,
     {
         let base_url = self.base_url.clone();
         let client = self.http.clone();
-        let ids: Vec<String> = ids.iter().map(|s| s.to_string()).collect();
 
         tokio::spawn(async move {
             loop {
@@ -170,75 +173,93 @@ impl HermesClient {
 
 #[cfg(test)]
 mod test {
-    use {
-        super::*,
-        tokio::time::{timeout, Duration},
-    };
-    const BASE_URL: &str = "https://hermes.pyth.network";
-    const FEED_ID: &str = "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace";
+    use super::{types::PUBLIC_BASE_URL, *};
 
-    #[tokio::test]
+    const ETH_USD_FEED_ID: &str =
+        "ff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace";
+    const SOL_USD_FEED_ID: &str =
+        "ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d";
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_stream_price_updates_live() {
-        let client = HermesClient::new(BASE_URL);
-        let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+        let client = HermesClient::new(PUBLIC_BASE_URL);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
 
-        client
-            .stream_price_updates(&[FEED_ID], move |update| {
-                let _ = tx.try_send(update);
-            })
-            .await
-            .expect("Failed to start SSE stream");
-
-        let mut events_received = 0;
+        let handler = tokio::task::spawn(async move {
+            client
+                .stream_price_updates(
+                    vec![ETH_USD_FEED_ID.to_string(), SOL_USD_FEED_ID.to_string()],
+                    move |update| {
+                        let _ = tx.send(update);
+                    },
+                )
+                .await
+                .expect("Failed to start SSE stream");
+        });
+        let mut found_eth_feed = false;
+        let mut found_sol_feed = false;
+        let mut timer = tokio::time::interval(std::time::Duration::from_secs(20));
+        timer.tick().await;
         loop {
-            let result = timeout(Duration::from_secs(20), rx.recv()).await;
-
-            match result {
-                Ok(Some(update)) => {
-                    assert_eq!(
-                        update.id.to_lowercase(),
-                        FEED_ID.trim_start_matches("0x").to_lowercase()
-                    );
-                    events_received += 1;
+            tokio::select! {
+                result = rx.recv() => {
+                    if let Some(update) = result {
+                        println!("update {update:#?}");
+                        if update.id.contains(ETH_USD_FEED_ID) {
+                            found_eth_feed = true;
+                        }
+                        if update.id.contains(SOL_USD_FEED_ID) {
+                            found_sol_feed = true;
+                        }
+                        if found_eth_feed && found_sol_feed {
+                            break;
+                        }
+                    } else {
+                        panic!("channel closed");
+                    }
                 }
-                Ok(None) => panic!("Channel closed before receiving data"),
-                Err(_) => panic!("Timed out waiting for SSE data"),
+                _ = timer.tick() => {
+                    break;
+                }
             }
-
-            if events_received >= 2 {
-                break;
-            }
+        }
+        handler.abort();
+        if !found_eth_feed || !found_sol_feed {
+            panic!("failed to find feeds");
         }
     }
 
     #[tokio::test]
     async fn test_latest_price_feeds() {
-        let hc = HermesClient::new(BASE_URL);
+        let hc = HermesClient::new(PUBLIC_BASE_URL);
 
-        let _ = hc.get_latest_price_feeds(&[FEED_ID]).await.unwrap();
+        let _ = hc.get_latest_price_feeds(&[ETH_USD_FEED_ID]).await.unwrap();
     }
 
     #[tokio::test]
     async fn test_get_latest_price_feeds_live() {
-        let client = HermesClient::new(BASE_URL);
-        let result = client.get_latest_price_feeds(&[FEED_ID]).await.unwrap();
+        let client = HermesClient::new(PUBLIC_BASE_URL);
+        let result = client
+            .get_latest_price_feeds(&[ETH_USD_FEED_ID])
+            .await
+            .unwrap();
         assert!(!result.is_empty());
         assert_eq!(
             result[0].id.to_lowercase(),
-            FEED_ID.trim_start_matches("0x").to_lowercase()
+            ETH_USD_FEED_ID.trim_start_matches("0x").to_lowercase()
         );
     }
 
     #[tokio::test]
     async fn test_get_price_feeds_metadata_live_empty() {
-        let client = HermesClient::new(BASE_URL);
+        let client = HermesClient::new(PUBLIC_BASE_URL);
         let metadata = client.get_price_feeds_metadata(None, None).await.unwrap();
         assert!(!metadata.is_empty());
     }
 
     #[tokio::test]
     async fn test_get_price_feeds_metadata_live() {
-        let client = HermesClient::new(BASE_URL);
+        let client = HermesClient::new(PUBLIC_BASE_URL);
         let metadata = client
             .get_price_feeds_metadata(Some("bitcoin"), None)
             .await
@@ -248,24 +269,24 @@ mod test {
 
     #[tokio::test]
     async fn test_get_latest_publisher_stake_caps_live() {
-        let client = HermesClient::new(BASE_URL);
+        let client = HermesClient::new(PUBLIC_BASE_URL);
         let response = client.get_latest_publisher_stake_caps().await.unwrap();
         assert!(!response.binary.data.is_empty());
     }
 
     #[tokio::test]
     async fn test_get_price_updates_by_time_live() {
-        let client = HermesClient::new(BASE_URL);
+        let client = HermesClient::new(PUBLIC_BASE_URL);
         let result = client
-            .get_price_updates_by_time(1717632000, &[FEED_ID])
+            .get_price_updates_by_time(1717632000, &[ETH_USD_FEED_ID])
             .await;
         assert!(result.is_ok() || matches!(result, Err(reqwest::Error { .. })));
     }
 
     #[tokio::test]
     async fn test_get_latest_twaps_live() {
-        let client = HermesClient::new(BASE_URL);
-        let result = client.get_latest_twaps(300, &[FEED_ID]).await;
+        let client = HermesClient::new(PUBLIC_BASE_URL);
+        let result = client.get_latest_twaps(300, &[ETH_USD_FEED_ID]).await;
         assert!(result.is_ok() || matches!(result, Err(reqwest::Error { .. })));
     }
 }

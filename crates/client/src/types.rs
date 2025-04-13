@@ -1,6 +1,9 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
+/// URL of the public hermes api
+pub const PUBLIC_BASE_URL: &str = "https://hermes.pyth.network";
+
 #[derive(Debug, Deserialize)]
 pub struct RpcPriceFeed {
     pub id: String,

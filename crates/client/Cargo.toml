@@ -1,6 +1,6 @@
 [package]
 name = "pyth-hermes-rs"
-version = "0.0.4"
+version = "0.0.5"
 description = "HTTP client for the Pyth Hermes API"
 keywords = ["solana", "pyth", "http"]
 readme = "../../README.md"
