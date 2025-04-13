@@ -803,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "pyth-hermes-rs"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "futures-util",
  "log",
